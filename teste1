@@ -1,0 +1,83 @@
+const express = require('express');
+const mongoose = require('mongoose');
+const bodyParser = require('body-parser');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+
+// Configurações do Express
+const app = express();
+const port = process.env.PORT || 3000;
+
+// Middleware para análise de corpo da solicitação
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: false }));
+
+// Conexão com o banco de dados MongoDB
+mongoose.connect('mongodb://localhost:27017/seu-banco-de-dados', {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+  useCreateIndex: true,
+});
+const db = mongoose.connection;
+db.on('error', console.error.bind(console, 'Erro de conexão com o MongoDB:'));
+db.once('open', () => {
+  console.log('Conexão com o MongoDB estabelecida com sucesso');
+});
+
+// Modelo de usuário
+const User = mongoose.model('User', new mongoose.Schema({
+  name: String,
+  email: { type: String, unique: true },
+  password: String,
+}));
+
+// Rota de registro de usuário
+app.post('/register', async (req, res) => {
+  try {
+    const hashedPassword = await bcrypt.hash(req.body.password, 10);
+    const user = new User({
+      name: req.body.name,
+      email: req.body.email,
+      password: hashedPassword,
+    });
+    await user.save();
+    res.status(201).send('Usuário registrado com sucesso');
+  } catch {
+    res.status(500).send('Erro ao registrar o usuário');
+  }
+});
+
+// Rota de login de usuário
+app.post('/login', async (req, res) => {
+  const user = await User.findOne({ email: req.body.email });
+  if (!user) return res.status(404).send('Usuário não encontrado');
+
+  const validPassword = await bcrypt.compare(req.body.password, user.password);
+  if (!validPassword) return res.status(401).send('Senha inválida');
+
+  const token = jwt.sign({ _id: user._id }, 'seu-segredo');
+  res.header('Authorization', token).send(token);
+});
+
+// Middleware para autenticação de usuário
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (token == null) return res.sendStatus(401);
+
+  jwt.verify(token, 'seu-segredo', (err, user) => {
+    if (err) return res.sendStatus(403);
+    req.user = user;
+    next();
+  });
+}
+
+// Rota protegida
+app.get('/protegida', authenticateToken, (req, res) => {
+  res.send('Informações protegidas');
+});
+
+// Iniciar o servidor
+app.listen(port, () => {
+  console.log(`Servidor rodando na porta ${port}`);
+});
